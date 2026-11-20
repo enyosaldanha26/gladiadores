@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Gladiadores — Suíte de Testes</title>
+</head>
+<body>
+  <pre id="test-output">Executando testes...</pre>
+  <div id="test-status" data-status="running">running</div>
+
+  <script src="../src/js/constants.js"></script>
+  <script src="../src/js/engine.js"></script>
+  <script src="../src/js/ai.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var C = window.Gladiadores.CONSTANTS;
+      var E = window.Gladiadores.Engine;
+      var AI = window.Gladiadores.AI;
+
+      var results = [];
+      var failures = 0;
+
+      function assert(cond, msg) {
+        if (!cond) {
+          throw new Error(msg || 'Assertion failed');
+        }
+      }
+
+      function assertEqual(actual, expected, msg) {
+        if (actual !== expected) {
+          throw new Error((msg || 'Mismatch') + ': esperado ' + JSON.stringify(expected) + ', obtido ' + JSON.stringify(actual));
+        }
+      }
+
+      function test(name, fn) {
+        try {
+          fn();
+          results.push('[PASS] ' + name);
+        } catch (err) {
+          failures++;
+          results.push('[FAIL] ' + name + ' -> ' + err.message);
+        }
+      }
+
+      function mulberry32(seed) {
+        return function () {
+          var t = (seed += 0x6D2B79F5);
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function card(suit, val) {
+        var base = { tridente: 0, mangual: 10, gladio: 20, machado: 30 }[suit];
+        var num = ('00' + (base + val)).slice(-3);
+        return C.getCardById('GL' + num);
+      }
+
+      function damagedBetween(s1, s2) {
+        return C.CARD_CATALOG.find(function (c) {
+          return (
+            c.type === 'damaged' &&
+            ((c.topSuit === s1 && c.bottomSuit === s2) || (c.topSuit === s2 && c.bottomSuit === s1))
+          );
+        });
+      }
+
+      function makeCustomState(numPlayers, boardSide, hands, playAreas) {
+        var state = E.createGame({
+          numPlayers: numPlayers,
+          boardSide: boardSide,
+          firstPlayerIdx: 0,
+          skipInitialDeal: true,
+          players: [
+            { name: 'P1', color: 'cinza', isHuman: true },
+            { name: 'P2', color: 'laranja', isHuman: false },
+            { name: 'P3', color: 'branco', isHuman: false },
+            { name: 'P4', color: 'amarelo', isHuman: false }
+          ].slice(0, numPlayers)
+        });
+        for (var i = 0; i < numPlayers; i++) {
+          state.players[i].hand = hands[i] ? hands[i].slice() : [];
+          if (playAreas && playAreas[i]) {
+            C.SUITS.forEach(function (st) {
+              state.players[i].playArea[st] = (playAreas[i][st] || []).slice();
+            });
+          }
+        }
+        return state;
+      }
+
+      function playSequence(state, moves) {
+        moves.forEach(function (m) {
+          E.playCard(state, m[0], m[1].id, m[2] || null);
+        });
+      }
+
+      // 1. Setup 3 e 4 jogadores
+      test('Setup 3 jogadores: 41 cartas (sem 2 e 3, 3 Leoes), 13 cada + 2 fora, 3 rodadas', function () {
+        var s = E.createGame({ numPlayers: 3, boardSide: 'A', rng: mulberry32(42) });
+        assertEqual(s.totalRounds, 3, 'totalRounds');
+        assertEqual(s.sideBTarget, 15, 'sideBTarget');
+        assertEqual(s.unusedCards.length, 2, 'unusedCards');
+        var all = [];
+        s.players.forEach(function (p) {
+          assertEqual(p.hand.length, 13, 'mao 13');
+          C.SUITS.forEach(function (st) { assertEqual(p.tracksA[st], 6, 'casa inicial 7a coluna'); });
+          all = all.concat(p.hand);
+        });
+        all = all.concat(s.unusedCards);
+        assertEqual(all.length, 41, 'baralho 3p');
+        assert(!all.some(function (c) { return c.type === 'combat' && (c.value === 2 || c.value === 3); }), 'sem 2 ou 3');
+        assertEqual(all.filter(function (c) { return c.type === 'lion'; }).length, 3, 'apenas 3 leoes');
+        assert(E.countAllCardsInState(s).valid, 'conservacao 3p');
+      });
+
+      test('Setup 4 jogadores Lado B: 50 cartas, 12 cada + 2 fora, posicao 5, 4 rodadas', function () {
+        var s = E.createGame({ numPlayers: 4, boardSide: 'B', rng: mulberry32(99) });
+        assertEqual(s.totalRounds, 4, 'totalRounds');
+        assertEqual(s.sideBTarget, 20, 'sideBTarget');
+        assertEqual(s.unusedCards.length, 2, 'unusedCards');
+        s.players.forEach(function (p) {
+          assertEqual(p.hand.length, 12, 'mao 12');
+          assertEqual(p.trackB, 5, 'espaco inicial 5');
+        });
+        assert(E.countAllCardsInState(s).valid, 'conservacao 4p');
+      });
+
+      // 2. Legalidade e override de cartas especiais
+      test('Legalidade: seguir naipe ou jogar especial, mas proibir combate fora do naipe se tiver lider', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 5), card('tridente', 4)],
+          [card('gladio', 2), card('tridente', 9), C.getCardById('GL047'), damagedBetween('machado', 'gladio')],
+          [card('tridente', 3)],
+          [card('mangual', 6)]
+        ]);
+        E.playCard(s, 0, card('gladio', 5).id, null);
+        assertEqual(s.leadSuit, 'gladio');
+        assert(E.getCardPlayRestriction(s, 1, card('tridente', 9).id) !== null, 'proibe combate fora do naipe');
+        assert(E.getCardPlayRestriction(s, 1, card('gladio', 2).id) === null, 'permite combate do naipe');
+        assert(E.getCardPlayRestriction(s, 1, 'GL047') === null, 'permite leao mesmo tendo naipe lider');
+        assert(E.getCardPlayRestriction(s, 1, damagedBetween('machado', 'gladio').id) === null, 'permite arma danificada mesmo tendo naipe lider');
+      });
+
+      test('Lider joga Leao: leadSuit fica neutro ate primeira carta de combate ou arma danificada', function () {
+        var s = makeCustomState(4, 'A', [
+          [C.getCardById('GL047'), card('gladio', 1)],
+          [card('machado', 8), card('tridente', 2)],
+          [card('machado', 4), card('gladio', 3)],
+          [card('tridente', 6), card('gladio', 9)]
+        ]);
+        E.playCard(s, 0, 'GL047', null);
+        assertEqual(s.leadSuit, null, 'leao nao define naipe lider');
+        E.playCard(s, 1, card('machado', 8).id, null);
+        assertEqual(s.leadSuit, 'machado', 'machado vira naipe lider');
+      });
+
+      // 3. Exemplos 1 a 11 do Manual
+      test('Manual Exemplo 1: maior carta do naipe lider vence (J2 com 7 de Gladio)', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 3), card('gladio', 9)],
+          [card('gladio', 7), card('gladio', 10)],
+          [card('gladio', 5), card('gladio', 8)],
+          [card('gladio', 2), card('gladio', 4)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 3)],
+          [1, card('gladio', 7)],
+          [2, card('gladio', 5)],
+          [3, card('gladio', 2)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 1);
+      });
+
+      test('Manual Exemplo 2: carta fora do naipe lider (6 Machado) nao vence 5 de Gladio', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 4), card('gladio', 9)],
+          [card('machado', 6), card('tridente', 8)],
+          [card('gladio', 5), card('gladio', 7)],
+          [card('gladio', 1), card('gladio', 2)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 4)],
+          [1, card('machado', 6)],
+          [2, card('gladio', 5)],
+          [3, card('gladio', 1)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 2);
+      });
+
+      test('Manual Exemplo 3: 1 vence 10 do mesmo naipe', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 6), card('gladio', 9)],
+          [card('gladio', 10), card('gladio', 8)],
+          [card('tridente', 5), card('tridente', 4)],
+          [card('gladio', 1), card('gladio', 2)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 6)],
+          [1, card('gladio', 10)],
+          [2, card('tridente', 5)],
+          [3, card('gladio', 1)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 3);
+        assertEqual(s.pendingResolution.winReason, 'one_beats_ten');
+      });
+
+      test('Regra inversa: 1 NAO vence 9 quando 10 nao esta na batalha', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 6), card('gladio', 2)],
+          [card('gladio', 9), card('gladio', 8)],
+          [card('tridente', 5), card('tridente', 4)],
+          [card('gladio', 1), card('gladio', 3)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 6)],
+          [1, card('gladio', 9)],
+          [2, card('tridente', 5)],
+          [3, card('gladio', 1)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 1);
+      });
+
+      test('Manual Exemplo 4: primeira Arma Danificada define naipe lider e vence se ninguem seguir', function () {
+        var d1 = damagedBetween('mangual', 'tridente');
+        var d2 = damagedBetween('gladio', 'machado');
+        var s = makeCustomState(4, 'A', [
+          [d1, card('tridente', 9)],
+          [card('gladio', 7), card('tridente', 8)],
+          [d2, card('gladio', 4)],
+          [card('machado', 2), card('tridente', 3)]
+        ]);
+        playSequence(s, [
+          [0, d1, 'mangual'],
+          [1, card('gladio', 7)],
+          [2, d2, 'gladio'],
+          [3, card('machado', 2)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 0);
+        assertEqual(s.pendingResolution.winReason, 'damaged_lead');
+      });
+
+      test('Manual Exemplo 5: ultima Arma Danificada declarada no naipe lider vence', function () {
+        var d1 = damagedBetween('mangual', 'tridente');
+        var d2 = damagedBetween('mangual', 'machado');
+        var s = makeCustomState(4, 'A', [
+          [d1, card('tridente', 9)],
+          [card('gladio', 7), card('tridente', 8)],
+          [d2, card('gladio', 4)],
+          [card('machado', 2), card('tridente', 3)]
+        ]);
+        playSequence(s, [
+          [0, d1, 'mangual'],
+          [1, card('gladio', 7)],
+          [2, d2, 'mangual'],
+          [3, card('machado', 2)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 2);
+      });
+
+      test('Manual Exemplos 6 e 7: coleta todas do naipe lider + escolha de 1 carta extra de outro naipe', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('tridente', 3), card('gladio', 9), card('mangual', 2)],
+          [card('tridente', 7), card('gladio', 8), card('mangual', 3)],
+          [card('machado', 8), card('gladio', 4), card('mangual', 4)],
+          [card('machado', 2), card('gladio', 5), card('mangual', 5)]
+        ]);
+        playSequence(s, [
+          [0, card('tridente', 3)],
+          [1, card('tridente', 7)],
+          [2, card('machado', 8)],
+          [3, card('machado', 2)]
+        ]);
+        assertEqual(s.phase, 'CHOOSE_OFFSUIT_CARD', 'precisa escolher entre 8 e 2 de Machado');
+        assertEqual(s.pendingResolution.winnerIdx, 1);
+        E.chooseOffsuitCard(s, 1, card('machado', 8).id);
+        E.finalizeBattle(s);
+        assertEqual(s.players[1].playArea.tridente.length, 2);
+        assertEqual(s.players[1].playArea.machado.length, 1);
+        assertEqual(s.players[1].playArea.machado[0].value, 8);
+        assertEqual(s.discardPile.length, 1);
+        assertEqual(s.discardPile[0].id, card('machado', 2).id);
+      });
+
+      test('Manual Exemplos 8, 9 e 10: Leao unico e ultimo Leao vencem e vao pro descarte', function () {
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 3), card('tridente', 9), card('mangual', 2)],
+          [card('gladio', 6), card('tridente', 8), card('mangual', 3)],
+          [C.getCardById('GL047'), card('tridente', 4), card('mangual', 4)],
+          [C.getCardById('GL048'), card('tridente', 5), card('mangual', 5)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 3)],
+          [1, card('gladio', 6)],
+          [2, C.getCardById('GL047')],
+          [3, C.getCardById('GL048')]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 3, 'ultimo leao vence');
+        assertEqual(s.phase, 'BATTLE_RESOLVED');
+        E.finalizeBattle(s);
+        assertEqual(s.players[3].playArea.gladio.length, 2);
+        assertEqual(s.discardPile.length, 2);
+      });
+
+      test('Manual Exemplo 11: Arma Danificada elimina da area de jogo do proprio vencedor', function () {
+        var d1 = damagedBetween('mangual', 'tridente');
+        var d2 = damagedBetween('tridente', 'gladio');
+        var s = makeCustomState(4, 'A', [
+          [d1, card('tridente', 9), card('gladio', 1)],
+          [card('gladio', 7), card('tridente', 8), card('gladio', 2)],
+          [d2, card('gladio', 4), card('gladio', 3)],
+          [card('machado', 2), card('tridente', 3), card('gladio', 5)]
+        ], [
+          { mangual: [card('mangual', 4)] },
+          null,
+          null,
+          null
+        ]);
+        playSequence(s, [
+          [0, d1, 'mangual'],
+          [1, card('gladio', 7)],
+          [2, d2, 'tridente'],
+          [3, card('machado', 2)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 0);
+        assertEqual(s.players[0].playArea.mangual.length, 0, 'mangual removido da propria area de jogo');
+        assertEqual(s.pendingResolution.eliminations[0].selfHarm, true);
+        assertEqual(s.phase, 'CHOOSE_OFFSUIT_CARD');
+        E.chooseOffsuitCard(s, 0, card('gladio', 7).id);
+        E.finalizeBattle(s);
+        assertEqual(s.players[0].playArea.gladio.length, 1);
+        assertEqual(s.discardPile.length, 4); // d1, d2, mangual 4, machado 2
+      });
+
+      test('Edge case: Multiplas Armas Danificadas executam na ordem de jogada e clamping [0, 10] no Lado A', function () {
+        var d1 = damagedBetween('gladio', 'machado');
+        var d2 = damagedBetween('gladio', 'tridente');
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 8), card('mangual', 4), card('tridente', 2)],
+          [d1, card('mangual', 5), card('tridente', 3)],
+          [d2, card('mangual', 6), card('tridente', 4)],
+          [card('gladio', 3), card('mangual', 7), card('tridente', 5)]
+        ], [
+          { gladio: [card('gladio', 1)] },
+          null,
+          null,
+          null
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 8)],
+          [1, d1, 'gladio'],
+          [2, d2, 'gladio'],
+          [3, card('gladio', 3)]
+        ]);
+        // 1a Arma Danificada elimina menor na arena (3 de Gladio), 2a elimina o proximo na arena (8 de Gladio)
+        assertEqual(s.pendingResolution.winnerIdx, 0, 'J1 ja tinha vencido na Etapa 2');
+        assertEqual(s.pendingResolution.eliminations[0].eliminatedCard.value, 3);
+        assertEqual(s.pendingResolution.eliminations[1].eliminatedCard.value, 8);
+        assertEqual(s.players[0].playArea.gladio.length, 1, 'area do vencedor intocada porque havia 2 cartas na arena');
+
+        // Clamping [0, 10] no Lado A
+        s.players[0].tracksA.machado = 10;
+        s.players[1].tracksA.machado = 0;
+        s.players[0].playArea.machado = [card('machado', 1), card('machado', 2), card('machado', 3), card('machado', 4), card('machado', 5)];
+        s.players[1].playArea.machado = [card('machado', 6)];
+        E.scoreRound(s);
+        assertEqual(s.players[0].tracksA.machado, 10, 'clamping maximo 10 no Lado A');
+        assertEqual(s.players[1].tracksA.machado, 0, 'clamping minimo 0 no Lado A');
+      });
+
+      test('Edge case: Gatilho antecipado Lado B (>= 15/20), desempates e vitoria compartilhada', function () {
+        var s = makeCustomState(3, 'B', [
+          [card('gladio', 1)],
+          [card('tridente', 1)],
+          [card('mangual', 1)]
+        ], [
+          { gladio: [card('gladio', 4), card('gladio', 5), card('gladio', 6), card('gladio', 7), card('gladio', 8)] },
+          { tridente: [card('tridente', 4), card('tridente', 5), card('tridente', 6), card('tridente', 7), card('tridente', 8)] },
+          {}
+        ]);
+        s.players[0].trackB = 11;
+        s.players[1].trackB = 11;
+        s.players[2].trackB = 5;
+        var sum = E.scoreRound(s);
+        assertEqual(sum.triggersGameOver, true, 'atingiu >= 15 no Lado B em 3J antes da rodada 3');
+        var stB = E.computeFinalStandings(s);
+        assertEqual(stB.sharedVictory, true, 'empate exato em trackB e lastRoundDelta gera vitoria compartilhada');
+        assertEqual(stB.winners.length, 2); // P1 e P2 ambos em 16 pontos com +5
+
+        // Desempate Lado B por ultimo avanco
+        s.players[1].lastRoundDelta = 7;
+        var stB2 = E.computeFinalStandings(s);
+        assertEqual(stB2.sharedVictory, false);
+        assertEqual(stB2.tiebreakApplied, true);
+        assertEqual(stB2.winners[0], 1, 'P2 vence no desempate por maior avanco na ultima rodada');
+
+        // Desempate Lado A por mais trilhas e empate persistente
+        var sA = makeCustomState(3, 'A', [[], [], []]);
+        sA.players[0].tracksA = { gladio: 8, tridente: 8, mangual: 4, machado: 4 }; // 5+5+2+2 = 14
+        sA.players[1].tracksA = { gladio: 7, tridente: 7, mangual: 8, machado: 8 }; // 3+3+5+5 = 16 -> nao, ajustar para 5+3+5+3 vs 3+5+3+5
+        sA.players[0].tracksA = { gladio: 9, tridente: 6, mangual: 9, machado: 6 }; // 5+3+5+3 = 16
+        sA.players[1].tracksA = { gladio: 6, tridente: 9, mangual: 6, machado: 9 }; // 3+5+3+5 = 16
+        sA.players[2].tracksA = { gladio: 2, tridente: 2, mangual: 2, machado: 2 }; // 2+2+2+2 = 8
+        var stA = E.computeFinalStandings(sA);
+        assertEqual(stA.sharedVictory, true, '2 trilhas contra 2 no Lado A -> vitoria compartilhada');
+        sA.players[0].tracksA.tridente = 9; // agora P0 empatou em Tridente (9 vs 9) e vence 2-0 nas outras
+        var stA2 = E.computeFinalStandings(sA);
+        assertEqual(stA2.sharedVictory, false);
+        assertEqual(stA2.winners[0], 0, 'P0 vence por estar a frente em mais trilhas');
+      });
+
+      test('Edge case: Arma Danificada com 1 e 10 na arena elimina 10 (pois 1 vale mais que 10)', function () {
+        var dmg = damagedBetween('gladio', 'machado');
+        var s = makeCustomState(4, 'A', [
+          [card('gladio', 1), card('tridente', 9), card('mangual', 2)],
+          [card('gladio', 10), card('tridente', 8), card('mangual', 3)],
+          [dmg, card('tridente', 4), card('mangual', 4)],
+          [card('machado', 5), card('tridente', 3), card('mangual', 5)]
+        ]);
+        playSequence(s, [
+          [0, card('gladio', 1)],
+          [1, card('gladio', 10)],
+          [2, dmg, 'gladio'],
+          [3, card('machado', 5)]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 0, 'vencedor fixado na Etapa 2 continua sendo J1 (1 de Gladio)');
+        assertEqual(s.pendingResolution.eliminations[0].eliminatedCard.value, 10, '10 eliminado antes do 1');
+      });
+
+      test('Edge case: Todos jogam Leao na mesma batalha -> leadSuit neutro, 0 cartas coletadas', function () {
+        var s = makeCustomState(4, 'A', [
+          [C.getCardById('GL047'), card('gladio', 2), card('mangual', 2)],
+          [C.getCardById('GL048'), card('gladio', 3), card('mangual', 3)],
+          [C.getCardById('GL049'), card('gladio', 4), card('mangual', 4)],
+          [C.getCardById('GL050'), card('gladio', 5), card('mangual', 5)]
+        ]);
+        playSequence(s, [
+          [0, C.getCardById('GL047')],
+          [1, C.getCardById('GL048')],
+          [2, C.getCardById('GL049')],
+          [3, C.getCardById('GL050')]
+        ]);
+        assertEqual(s.pendingResolution.winnerIdx, 3);
+        E.finalizeBattle(s);
+        assertEqual(E.getTotalPlayAreaCount(s.players[3]), 0);
+        assertEqual(s.discardPile.length, 4);
+      });
+
+      // 4. Exemplos 12 a 17 (Pontuacao Lado A & Lado B)
+      test('Manual Exemplo 12: Lado A pontuacao de rodada (+1, -1, -2, 0)', function () {
+        var s = makeCustomState(4, 'A', [[], [], [], []], [
+          { gladio: [card('gladio', 1), card('gladio', 2), card('gladio', 3)] }, // Cinza: 3 (diff 2 -> -1)
+          { gladio: [card('gladio', 4), card('gladio', 5), card('gladio', 6), card('gladio', 7), card('gladio', 8)] }, // Laranja: 5 (+1)
+          { gladio: [card('gladio', 9)] }, // Branco: 1 (diff 4 -> -2)
+          {} // Amarelo: 0 (0)
+        ]);
+        E.scoreRound(s);
+        assertEqual(s.players[0].tracksA.gladio, 5, 'Cinza 6 -> 5 (-1)');
+        assertEqual(s.players[1].tracksA.gladio, 7, 'Laranja 6 -> 7 (+1)');
+        assertEqual(s.players[2].tracksA.gladio, 4, 'Branco 6 -> 4 (-2)');
+        assertEqual(s.players[3].tracksA.gladio, 6, 'Amarelo 6 -> 6 (0)');
+      });
+
+      test('Manual Exemplo 13: Lado A pontuacao final densa (Laranja 15, Amarelo 14, Branco 14, Cinza 10)', function () {
+        var s = makeCustomState(4, 'A', [[], [], [], []]);
+        // 0=Cinza, 1=Laranja, 2=Branco, 3=Amarelo
+        s.players[1].tracksA = { gladio: 9, tridente: 8, mangual: 4, machado: 5 };
+        s.players[3].tracksA = { gladio: 7, tridente: 6, mangual: 9, machado: 5 };
+        s.players[2].tracksA = { gladio: 3, tridente: 8, mangual: 7, machado: 9 };
+        s.players[0].tracksA = { gladio: 5, tridente: 6, mangual: 4, machado: 5 };
+        var st = E.computeFinalStandings(s);
+        var byIdx = {};
+        st.rows.forEach(function (r) { byIdx[r.playerIdx] = r; });
+        assertEqual(byIdx[1].totalPoints, 15, 'Laranja 15');
+        assertEqual(byIdx[3].totalPoints, 14, 'Amarelo 14');
+        assertEqual(byIdx[2].totalPoints, 14, 'Branco 14');
+        assertEqual(byIdx[0].totalPoints, 10, 'Cinza 10');
+        assertEqual(st.winners[0], 1, 'Laranja vence');
+      });
+
+      test('Manual Exemplos 14, 15, 16, 17: Lado B Casos A, B, C e D', function () {
+        // Ex 14.1 (6-1=+5) + Ex 14.2 (5-2-2-2=-1) + Ex 15 (2+2+2+2=+8) + Ex 17 (0 -> iguala maior = +8)
+        var s1 = makeCustomState(4, 'B', [[], [], [], []], [
+          {}, // Caso D
+          {
+            gladio: [card('gladio', 1), card('gladio', 2)],
+            tridente: [card('tridente', 1), card('tridente', 2)],
+            mangual: [card('mangual', 1), card('mangual', 2)],
+            machado: [card('machado', 1), card('machado', 2)]
+          }, // Ex 15: +8
+          {
+            gladio: [card('gladio', 3), card('gladio', 4), card('gladio', 5), card('gladio', 6), card('gladio', 7), card('gladio', 8)],
+            tridente: [card('tridente', 3), card('tridente', 4)],
+            mangual: [card('mangual', 3)]
+          }, // Ex 14.1: +5
+          {
+            gladio: [card('gladio', 1), card('gladio', 2), card('gladio', 3), card('gladio', 4), card('gladio', 5)],
+            tridente: [card('tridente', 5), card('tridente', 6)],
+            mangual: [card('mangual', 5), card('mangual', 6)],
+            machado: [card('machado', 5), card('machado', 6)]
+          } // Ex 14.2: -1
+        ]);
+        s1.players[0].trackB = 10;
+        var sum = E.scoreRound(s1);
+        assertEqual(sum.playerEntries[0].delta, 8, 'Caso D iguala maior (+8)');
+        assertEqual(sum.playerEntries[1].delta, 8, 'Caso B (2+2+2+2=+8)');
+        assertEqual(sum.playerEntries[2].delta, 5, 'Caso A1 (6-1=+5)');
+        assertEqual(sum.playerEntries[3].delta, -1, 'Caso A2 (5-2-2-2=-1)');
+
+        // Ex 16: Caso C (6 Tridente -> +6) e clamping minimo 1
+        var s2 = makeCustomState(3, 'B', [[], [], []], [
+          { tridente: [card('tridente', 1), card('tridente', 4), card('tridente', 5), card('tridente', 6), card('tridente', 7), card('tridente', 8)] },
+          { gladio: [card('gladio', 1), card('gladio', 4), card('gladio', 5), card('gladio', 6), card('gladio', 7)], tridente: [card('tridente', 9), card('tridente', 10)], mangual: [card('mangual', 9), card('mangual', 10)], machado: [card('machado', 9), card('machado', 10)] },
+          {}
+        ]);
+        s2.players[1].trackB = 1;
+        var sum2 = E.scoreRound(s2);
+        assertEqual(sum2.playerEntries[0].delta, 6, 'Caso C (+6)');
+        assertEqual(s2.players[1].trackB, 1, 'clamping minimo espaco 1 no Lado B');
+      });
+
+      test('Troca de Primeiro Jogador em sentido horario e reembaralhamento entre rodadas', function () {
+        var s = E.createGame({ numPlayers: 3, boardSide: 'A', firstPlayerIdx: 1, rng: mulberry32(7) });
+        // Simular 12 batalhas rapidas para concluir a rodada 1
+        while (s.phase !== 'ROUND_SUMMARY') {
+          if (s.phase === 'PLAYING_BATTLE') {
+            var p = s.currentPlayerIdx;
+            var mv = AI.chooseMove(s, p, 'estrategico');
+            E.playCard(s, p, mv.cardId, mv.declaredSuit);
+          } else if (s.phase === 'CHOOSE_OFFSUIT_CARD') {
+            var w = s.pendingResolution.winnerIdx;
+            E.chooseOffsuitCard(s, w, AI.chooseOffsuitCard(s, w, 'estrategico'));
+          } else if (s.phase === 'BATTLE_RESOLVED') {
+            E.finalizeBattle(s);
+          }
+        }
+        assertEqual(s.round, 1);
+        E.proceedAfterRoundSummary(s);
+        assertEqual(s.round, 2);
+        assertEqual(s.firstPlayerIdx, 2, 'passou para a esquerda');
+        assertEqual(s.leaderIdx, 2);
+        assert(E.countAllCardsInState(s).valid, 'conservacao apos reembaralhar');
+      });
+
+      // 5. Fuzz de 100 partidas completas IA vs IA (conservacao e termino limpo)
+      test('Fuzz 100 partidas IA vs IA (3J/4J x Lado A/B) com conservacao estrita de cartas', function () {
+        var configs = [
+          { numPlayers: 3, boardSide: 'A' },
+          { numPlayers: 4, boardSide: 'A' },
+          { numPlayers: 3, boardSide: 'B' },
+          { numPlayers: 4, boardSide: 'B' }
+        ];
+        var gameCounter = 0;
+        configs.forEach(function (cfg) {
+          for (var g = 0; g < 25; g++) {
+            gameCounter++;
+            var s = E.createGame({
+              numPlayers: cfg.numPlayers,
+              boardSide: cfg.boardSide,
+              rng: mulberry32(1000 + gameCounter),
+              players: [
+                { name: 'AI1', color: 'cinza', isHuman: false, difficulty: 'estrategico' },
+                { name: 'AI2', color: 'laranja', isHuman: false, difficulty: 'casual' },
+                { name: 'AI3', color: 'branco', isHuman: false, difficulty: 'estrategico' },
+                { name: 'AI4', color: 'amarelo', isHuman: false, difficulty: 'estrategico' }
+              ].slice(0, cfg.numPlayers)
+            });
+
+            var safety = 0;
+            while (s.phase !== 'GAME_OVER' && safety < 500) {
+              safety++;
+              if (s.phase === 'PLAYING_BATTLE') {
+                var mv = AI.chooseMove(s, s.currentPlayerIdx, s.players[s.currentPlayerIdx].difficulty);
+                E.playCard(s, s.currentPlayerIdx, mv.cardId, mv.declaredSuit);
+              } else if (s.phase === 'CHOOSE_OFFSUIT_CARD') {
+                var wIdx = s.pendingResolution.winnerIdx;
+                E.chooseOffsuitCard(s, wIdx, AI.chooseOffsuitCard(s, wIdx, s.players[wIdx].difficulty));
+              } else if (s.phase === 'BATTLE_RESOLVED') {
+                E.finalizeBattle(s);
+                assert(E.countAllCardsInState(s).valid, 'Conservacao falhou no jogo ' + gameCounter);
+              } else if (s.phase === 'ROUND_SUMMARY') {
+                E.proceedAfterRoundSummary(s);
+                assert(E.countAllCardsInState(s).valid, 'Conservacao falhou na virada de rodada ' + gameCounter);
+              }
+            }
+            assertEqual(s.phase, 'GAME_OVER', 'Jogo ' + gameCounter + ' nao terminou em GAME_OVER');
+            assert(s.finalStandings && s.finalStandings.winners.length >= 1, 'Sem vencedor definido');
+          }
+        });
+      });
+
+      var summaryLine = 'Total: ' + results.length + ' testes | Passaram: ' + (results.length - failures) + ' | Falharam: ' + failures;
+      results.push('----------------------------------------');
+      results.push(summaryLine);
+      document.getElementById('test-output').textContent = results.join('\n');
+      document.getElementById('test-status').setAttribute('data-status', failures === 0 ? 'passed' : 'failed');
+    })();
+  </script>
+</body>
+</html>

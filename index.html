@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gladiadores — Jogo de Tabuleiro</title>
+  <meta name="description" content="Gladiadores — Jogo de tabuleiro digital (3 a 4 jogadores, Tabuleiros Lado A e Lado B, Solo vs Bots e Passar e Jogar)." />
+  <link rel="icon" type="image/png" href="assets/ui/logo.png" />
+  <link rel="stylesheet" href="src/css/styles.css" />
+</head>
+<body>
+  <!-- TELA 1: MENU PRINCIPAL -->
+  <section id="screen-menu" class="screen is-active">
+    <div class="menu-bg"></div>
+    <div class="menu-shell">
+      <header class="menu-hero">
+        <div class="hero-logo-wrap">
+          <img src="assets/ui/logo.png" alt="Gladiadores" class="hero-logo" />
+          <p class="hero-subtitle">Lidere sua Casa de Gladiadores em busca de fama e glória no Coliseu</p>
+        </div>
+
+        <div class="hero-showcase">
+          <img src="assets/ui/box.png" alt="Caixa do jogo Gladiadores" class="hero-box" />
+          <div class="hero-meta-cards">
+            <div class="meta-pill"><strong>3 a 4</strong> jogadores</div>
+            <div class="meta-pill"><strong>3 a 4</strong> rodadas</div>
+            <div class="meta-pill"><strong>Lados A &amp; B</strong></div>
+          </div>
+        </div>
+
+        <div class="hero-actions-secondary">
+          <button type="button" id="btn-menu-rules" class="btn btn-secondary">Manual de Regras</button>
+          <button type="button" id="btn-menu-credits" class="btn btn-ghost">Créditos Oficiais</button>
+        </div>
+      </header>
+
+      <main class="menu-config-card">
+        <h2 class="config-title">Preparar Partida</h2>
+
+        <div class="config-group">
+          <label class="config-label">Número de Jogadores</label>
+          <div class="segmented" id="cfg-num-players">
+            <button type="button" class="seg-btn" data-players="3">3 Jogadores</button>
+            <button type="button" class="seg-btn is-active" data-players="4">4 Jogadores</button>
+          </div>
+          <p class="config-hint" id="cfg-players-hint">50 cartas completas • 12 cartas por jogador • 4 rodadas</p>
+        </div>
+
+        <div class="config-group">
+          <label class="config-label">Tabuleiro de Glória</label>
+          <div class="board-picker" id="cfg-board-side">
+            <button type="button" class="board-option is-active" data-side="A">
+              <img src="assets/boards/board_a.jpg" alt="Tabuleiro Lado A" />
+              <div class="board-option-info">
+                <strong>Lado A — Maioria nos Naipes</strong>
+                <span>Avance e recue nas 4 trilhas de armas; pontue 5/3/2/1 por posição final.</span>
+              </div>
+            </button>
+            <button type="button" class="board-option" data-side="B">
+              <img src="assets/boards/board_b.jpg" alt="Tabuleiro Lado B" />
+              <div class="board-option-info">
+                <strong>Lado B — Corrida de Glória</strong>
+                <span>Equilibre naipes ou foque em um só; vence ao chegar em 15/20 pts ou após as rodadas.</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="config-group">
+          <div class="config-row-between">
+            <label class="config-label">Casas &amp; Assentos</label>
+            <div class="mode-presets">
+              <button type="button" class="preset-btn is-active" id="btn-preset-solo">Solo vs Bots</button>
+              <button type="button" class="preset-btn" id="btn-preset-pass">Passar e Jogar</button>
+            </div>
+          </div>
+          <div class="seats-list" id="cfg-seats-list"></div>
+        </div>
+
+        <div class="config-footer">
+          <button type="button" id="btn-start-game" class="btn btn-primary btn-lg">Entrar na Arena</button>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <!-- TELA 2: MESA DE JOGO -->
+  <section id="screen-game" class="screen">
+    <header class="game-hud">
+      <div class="hud-left">
+        <img src="assets/ui/logo.png" alt="Gladiadores" class="hud-logo" />
+        <span class="hud-badge" id="hud-round">Rodada 1/4</span>
+        <span class="hud-badge" id="hud-battle">Batalha 1/11</span>
+        <span class="hud-badge hud-badge-accent" id="hud-board">Lado A</span>
+      </div>
+
+      <div class="hud-center" id="hud-turn-indicator">Turno do Jogador</div>
+
+      <div class="hud-right">
+        <button type="button" class="btn btn-hud" id="btn-speed" title="Alternar velocidade dos bots e da resolução">Velocidade: Normal</button>
+        <button type="button" class="btn btn-hud" id="btn-sound" title="Ativar/Desativar efeitos sonoros">Som: Ligado</button>
+        <button type="button" class="btn btn-hud" id="btn-history">Histórico</button>
+        <button type="button" class="btn btn-hud" id="btn-game-rules">Regras</button>
+        <button type="button" class="btn btn-hud btn-hud-danger" id="btn-back-menu">Menu</button>
+      </div>
+    </header>
+
+    <div class="game-table">
+      <div class="table-main" id="table-main">
+        <!-- COLUNA ESQUERDA: 2 JOGADORES -->
+        <div class="players-col players-col-left">
+          <div class="player-seat" id="seat-tl"></div>
+          <div class="player-seat" id="seat-bl"></div>
+        </div>
+
+        <!-- COLUNA CENTRAL: TABULEIRO + ARENA COMPACTA ALINHADOS -->
+        <div class="table-center">
+          <section class="board-section">
+            <div class="glory-board-wrap" id="glory-board-wrap">
+              <img src="assets/boards/board_a.jpg" alt="Tabuleiro de Glória" id="glory-board-img" class="glory-board-img" />
+              <div id="board-3p-mask" class="board-3p-mask" hidden></div>
+              <div id="glory-cubes-layer" class="glory-cubes-layer"></div>
+            </div>
+          </section>
+
+          <section class="arena-panel" id="arena-panel">
+            <div class="arena-header">
+              <div class="arena-header-left">
+                <span class="arena-order-pill" title="Ordem das jogadas em sentido horário">↻ Sentido Horário</span>
+                <div class="arena-stepper" id="arena-stepper" hidden></div>
+              </div>
+              <div class="arena-piles">
+                <div class="pile-chip" id="pile-unused" title="Cartas deixadas de fora da rodada (face para baixo)">
+                  <img src="assets/cards/card_back.jpg" alt="Fora da rodada" />
+                  <span>2 fora</span>
+                </div>
+                <div class="pile-chip" id="pile-discard" title="Pilha única de descarte (face para baixo)">
+                  <img src="assets/cards/card_back.jpg" alt="Descarte" />
+                  <span id="discard-count">0 descarte</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="arena-felt" id="arena-felt">
+              <div class="arena-lead-status" id="arena-lead-status"></div>
+              <div class="arena-cards-row" id="arena-cards-row"></div>
+              <div class="arena-narration" id="arena-narration" hidden></div>
+            </div>
+
+            <div class="arena-banner" id="arena-banner">
+              <div class="arena-banner-text" id="arena-banner-text"></div>
+              <div class="arena-banner-actions" id="arena-banner-actions"></div>
+            </div>
+          </section>
+        </div>
+
+        <!-- COLUNA DIREITA: 2 JOGADORES -->
+        <div class="players-col players-col-right">
+          <div class="player-seat" id="seat-tr"></div>
+          <div class="player-seat" id="seat-br"></div>
+        </div>
+      </div>
+
+      <!-- FAIXA INFERIOR CENTRALIZADA: MÃO DO JOGADOR -->
+      <section class="hand-dock" id="hand-dock">
+        <div class="hand-stage" id="hand-stage">
+          <div class="hand-header">
+            <span class="hand-title" id="hand-title">Sua Mão</span>
+            <span class="hand-subtitle" id="hand-subtitle"></span>
+          </div>
+          <div class="damaged-picker" id="damaged-picker" hidden></div>
+          <div class="hand-cards" id="hand-cards"></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- CORTINA DE PRIVACIDADE (PASSAR E JOGAR) -->
+  <div id="modal-privacy" class="modal-backdrop" hidden>
+    <div class="modal-card modal-privacy-card">
+      <div class="privacy-cube-holder" id="privacy-cube-holder"></div>
+      <h2 id="privacy-title">Passe o computador</h2>
+      <p id="privacy-desc">Entregue o controle ao próximo gladiador antes de revelar as cartas da mão.</p>
+      <button type="button" id="btn-privacy-reveal" class="btn btn-primary btn-lg">Revelar Mão (Espaço)</button>
+    </div>
+  </div>
+
+  <!-- MODAL: ZOOM DO TABULEIRO -->
+  <div id="modal-board-zoom" class="modal-backdrop" hidden>
+    <div class="modal-card modal-wide">
+      <div class="modal-header">
+        <h2 id="board-zoom-title">Tabuleiro de Glória</h2>
+        <button type="button" class="btn btn-ghost modal-close" data-close-modal="modal-board-zoom">Fechar</button>
+      </div>
+      <div class="board-zoom-body">
+        <div class="glory-board-wrap is-zoomed" id="zoomed-board-wrap">
+          <img src="assets/boards/board_a.jpg" alt="Tabuleiro Ampliado" id="zoomed-board-img" class="glory-board-img" />
+          <div id="zoomed-board-3p-mask" class="board-3p-mask" hidden></div>
+          <div id="zoomed-cubes-layer" class="glory-cubes-layer"></div>
+        </div>
+        <div id="board-zoom-standings" class="board-zoom-standings"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: INSPEÇÃO DE CARTA -->
+  <div id="modal-card-zoom" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card-inspect">
+      <div class="modal-header">
+        <h3 id="card-zoom-title">Carta</h3>
+        <button type="button" class="btn btn-ghost modal-close" data-close-modal="modal-card-zoom">Fechar</button>
+      </div>
+      <div class="card-zoom-body">
+        <div class="card-zoom-img-wrap">
+          <img id="card-zoom-img" src="" alt="Carta ampliada" />
+        </div>
+        <div class="card-zoom-info" id="card-zoom-info"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PONTUAÇÃO DE FIM DE RODADA -->
+  <div id="modal-round-summary" class="modal-backdrop" hidden>
+    <div class="modal-card modal-wide">
+      <div class="modal-header">
+        <h2 id="round-summary-title">Fim da Rodada</h2>
+      </div>
+      <div class="modal-scroll-body" id="round-summary-body"></div>
+      <div class="modal-footer">
+        <button type="button" id="btn-round-continue" class="btn btn-primary btn-lg">Próxima Rodada</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: FIM DE PARTIDA -->
+  <div id="modal-game-over" class="modal-backdrop" hidden>
+    <div class="modal-card modal-wide">
+      <div class="modal-header">
+        <h2 id="game-over-title">Fim de Partida — Coliseu</h2>
+      </div>
+      <div class="modal-scroll-body" id="game-over-body"></div>
+      <div class="modal-footer modal-footer-split">
+        <button type="button" id="btn-gameover-menu" class="btn btn-secondary">Menu Principal</button>
+        <button type="button" id="btn-gameover-rematch" class="btn btn-primary btn-lg">Jogar Novamente</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: MANUAL DE REGRAS E CRÉDITOS -->
+  <div id="modal-rules" class="modal-backdrop" hidden>
+    <div class="modal-card modal-wide modal-rules-card">
+      <div class="modal-header">
+        <h2>Manual de Regras — Gladiadores</h2>
+        <button type="button" class="btn btn-ghost modal-close" data-close-modal="modal-rules">Fechar</button>
+      </div>
+      <div class="rules-tabs" id="rules-tabs">
+        <button type="button" class="rules-tab is-active" data-tab="prep">Preparação</button>
+        <button type="button" class="rules-tab" data-tab="battle">Batalhas &amp; 1 vence 10</button>
+        <button type="button" class="rules-tab" data-tab="special">Leão &amp; Arma Danificada</button>
+        <button type="button" class="rules-tab" data-tab="sideA">Tabuleiro Lado A</button>
+        <button type="button" class="rules-tab" data-tab="sideB">Tabuleiro Lado B</button>
+        <button type="button" class="rules-tab" data-tab="credits">Créditos</button>
+      </div>
+      <div class="modal-scroll-body rules-body" id="rules-body"></div>
+    </div>
+  </div>
+
+  <!-- DRAWER: HISTÓRICO DE BATALHAS -->
+  <aside id="drawer-history" class="history-drawer" hidden>
+    <div class="drawer-header">
+      <h3>Histórico da Partida</h3>
+      <button type="button" class="btn btn-ghost" id="btn-close-history">Fechar</button>
+    </div>
+    <div class="drawer-body" id="history-list"></div>
+  </aside>
+
+  <div id="anim-layer" class="anim-layer" aria-hidden="true"></div>
+
+  <script src="src/js/constants.js"></script>
+  <script src="src/js/engine.js"></script>
+  <script src="src/js/ai.js"></script>
+  <script src="src/js/audio.js"></script>
+  <script src="src/js/ui.js"></script>
+  <script src="src/js/main.js"></script>
+</body>
+</html>

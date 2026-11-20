@@ -1,0 +1,11 @@
+# Arquivos brutos de impressão/origem (não usados em runtime)
+arquivos/
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.tmp
+.vscode/
+.idea/
