@@ -41,37 +41,58 @@
   function getSpeedTimings() {
     if (speedMode === 'fast') {
       return {
-        botMs: 440,
-        stageGapMs: 300,
-        flyMs: 280,
-        impactHoldMs: 160,
-        weaponPauseMs: 150,
-        roundStepMs: 650,
-        scoreJumpMs: 480,
-        walkStepMs: 85
+        botMs: 550,
+        cardLandMs: 220,
+        winnerHoldMs: 620,
+        stageGapMs: 480,
+        collectHoldMs: 620,
+        flyMs: 380,
+        impactHoldMs: 280,
+        weaponPauseMs: 300,
+        roundStartGapMs: 600,
+        roundStepMs: 1300,
+        scoreJumpMs: 960,
+        walkStepMs: 170,
+        roundEndHoldMs: 1300,
+        gameOverSideBHoldMs: 1600,
+        gameOverSideAHoldMs: 1900
       };
     }
     if (speedMode === 'manual') {
       return {
-        botMs: 840,
-        stageGapMs: 500,
-        flyMs: 450,
-        impactHoldMs: 240,
-        weaponPauseMs: 250,
-        roundStepMs: 1200,
-        scoreJumpMs: 850,
-        walkStepMs: 140
+        botMs: 1050,
+        cardLandMs: 420,
+        winnerHoldMs: 1200,
+        stageGapMs: 900,
+        collectHoldMs: 1200,
+        flyMs: 680,
+        impactHoldMs: 520,
+        weaponPauseMs: 550,
+        roundStartGapMs: 1000,
+        roundStepMs: 2400,
+        scoreJumpMs: 1700,
+        walkStepMs: 280,
+        roundEndHoldMs: 2200,
+        gameOverSideBHoldMs: 2800,
+        gameOverSideAHoldMs: 3400
       };
     }
     return {
-      botMs: 1100,
-      stageGapMs: 500,
-      flyMs: 450,
-      impactHoldMs: 240,
-      weaponPauseMs: 250,
-      roundStepMs: 1200,
-      scoreJumpMs: 850,
-      walkStepMs: 140
+      botMs: 1350,
+      cardLandMs: 420,
+      winnerHoldMs: 1200,
+      stageGapMs: 900,
+      collectHoldMs: 1200,
+      flyMs: 680,
+      impactHoldMs: 520,
+      weaponPauseMs: 550,
+      roundStartGapMs: 1000,
+      roundStepMs: 2400,
+      scoreJumpMs: 1700,
+      walkStepMs: 280,
+      roundEndHoldMs: 2200,
+      gameOverSideBHoldMs: 2800,
+      gameOverSideAHoldMs: 3400
     };
   }
 
@@ -341,12 +362,8 @@
     document.getElementById('hand-subtitle').textContent = 'Aguardando confirmação do jogador...';
   }
 
-  function playSoundsForMove(card) {
-    if (card.type === 'lion') {
-      AudioFX.lionRoar();
-    } else {
-      AudioFX.cardPlay();
-    }
+  function playSoundsForMove() {
+    AudioFX.cardPlay();
   }
 
   function refreshUI() {
@@ -435,7 +452,7 @@
 
         if (gameState.phase === 'ROUND_SUMMARY') {
           refreshUI();
-          return delayMs(timings.stageGapMs).then(function () {
+          return delayMs(timings.roundStartGapMs).then(function () {
             if (tok !== sessionToken || !gameState) return;
             recentArrivedCardIds = {};
             refreshAndDrive();
@@ -448,7 +465,7 @@
             recentArrivedCardIds = {};
             refreshUI();
           }
-        }, 650);
+        }, 1100);
       });
   }
 
@@ -462,7 +479,7 @@
       return;
     }
 
-    delayMs(timings.stageGapMs).then(function () {
+    delayMs(timings.collectHoldMs).then(function () {
       if (tok !== sessionToken || !gameState) return;
       executeStep3Flight(tok);
     });
@@ -504,73 +521,79 @@
     var timings = getSpeedTimings();
 
     animState = {
-      stage: 'STEP_1_WINNER',
+      stage: 'STEP_0_LANDING',
       completedElims: 0,
       hiddenArenaOrders: {},
       activeWeaponOrder: null
     };
     refreshUI();
-    AudioFX.battleWin();
 
-    // Etapa 1 -> meio segundo antes da Etapa 2 (ou Etapa 3)
-    delayMs(timings.stageGapMs).then(function () {
+    delayMs(timings.cardLandMs).then(function () {
       if (tok !== sessionToken || !gameState || !gameState.pendingResolution) return;
 
-      if (res.eliminations.length === 0) {
-        finishPostWeaponsResolution(tok);
-        return;
-      }
+      animState.stage = 'STEP_1_WINNER';
+      refreshUI();
+      AudioFX.battleWin();
 
-      // Etapa 2: Ativar Armas Danificadas em ordem de jogada
-      animState.stage = 'STEP_2_WEAPONS';
-      var idx = 0;
-
-      function nextWeapon() {
+      delayMs(timings.winnerHoldMs).then(function () {
         if (tok !== sessionToken || !gameState || !gameState.pendingResolution) return;
-        if (idx >= res.eliminations.length) {
-          animState.activeWeaponOrder = null;
-          delayMs(timings.stageGapMs).then(function () {
-            if (tok !== sessionToken || !gameState) return;
-            finishPostWeaponsResolution(tok);
-          });
+
+        if (res.eliminations.length === 0) {
+          finishPostWeaponsResolution(tok);
           return;
         }
 
-        var el = res.eliminations[idx];
-        var weaponPlay = gameState.arena.find(function (p) { return p.playOrder === el.weaponPlayOrder; });
-        animState.activeWeaponOrder = el.weaponPlayOrder;
-        refreshUI();
+        // Etapa 2: Ativar Armas Danificadas em ordem de jogada
+        animState.stage = 'STEP_2_WEAPONS';
+        var idx = 0;
 
-        var isCancelled = function () { return tok !== sessionToken || !gameState; };
-
-        UI.animateWeaponStrike(
-          weaponPlay,
-          el,
-          timings.flyMs,
-          timings.impactHoldMs,
-          function () {
-            if (!isCancelled()) AudioFX.damagedBreak();
-          },
-          isCancelled
-        ).then(function () {
-          if (tok !== sessionToken || !gameState) return;
-          animState.hiddenArenaOrders[el.weaponPlayOrder] = true;
-          if (el.source === 'arena' && el.targetPlayOrder !== null) {
-            animState.hiddenArenaOrders[el.targetPlayOrder] = true;
+        function nextWeapon() {
+          if (tok !== sessionToken || !gameState || !gameState.pendingResolution) return;
+          if (idx >= res.eliminations.length) {
+            animState.activeWeaponOrder = null;
+            delayMs(timings.stageGapMs).then(function () {
+              if (tok !== sessionToken || !gameState) return;
+              finishPostWeaponsResolution(tok);
+            });
+            return;
           }
-          animState.completedElims = idx + 1;
-          animState.activeWeaponOrder = null;
+
+          var el = res.eliminations[idx];
+          var weaponPlay = gameState.arena.find(function (p) { return p.playOrder === el.weaponPlayOrder; });
+          animState.activeWeaponOrder = el.weaponPlayOrder;
           refreshUI();
-          idx += 1;
-          if (idx < res.eliminations.length) {
-            delayMs(timings.weaponPauseMs).then(nextWeapon);
-          } else {
-            nextWeapon();
-          }
-        });
-      }
 
-      nextWeapon();
+          var isCancelled = function () { return tok !== sessionToken || !gameState; };
+
+          UI.animateWeaponStrike(
+            weaponPlay,
+            el,
+            timings.flyMs,
+            timings.impactHoldMs,
+            function () {
+              if (!isCancelled()) AudioFX.damagedBreak();
+            },
+            isCancelled
+          ).then(function () {
+            if (tok !== sessionToken || !gameState) return;
+            animState.hiddenArenaOrders[el.weaponPlayOrder] = true;
+            if (el.source === 'arena' && el.targetPlayOrder !== null) {
+              animState.hiddenArenaOrders[el.targetPlayOrder] = true;
+            }
+            animState.completedElims = idx + 1;
+            animState.activeWeaponOrder = null;
+            refreshUI();
+            idx += 1;
+            if (idx < res.eliminations.length) {
+              delayMs(timings.weaponPauseMs).then(nextWeapon);
+            } else {
+              nextWeapon();
+            }
+          });
+        }
+
+        nextWeapon();
+      });
     });
   }
 
@@ -1002,6 +1025,7 @@
       return;
     }
 
+    var timings = getSpeedTimings();
     var nextR = gameState.round + 1;
     animState = {
       stage: 'ROUND_SCORING',
@@ -1022,7 +1046,7 @@
     refreshUI();
 
     if (speedMode !== 'manual') {
-      delayMs(1100).then(function () {
+      delayMs(timings.roundEndHoldMs).then(function () {
         if (tok !== sessionToken || !gameState || gameState.phase !== 'ROUND_SUMMARY') return;
         handleProceedAfterRound();
       });
@@ -1065,7 +1089,7 @@
       };
       refreshUI();
       if (speedMode !== 'manual') {
-        delayMs(1400).then(function () {
+        delayMs(timings.gameOverSideBHoldMs).then(function () {
           if (tok !== sessionToken || !gameState) return;
           handleShowGameOverModal();
         });
@@ -1150,7 +1174,7 @@
           };
           refreshUI();
           if (speedMode !== 'manual') {
-            delayMs(1700).then(function () {
+            delayMs(timings.gameOverSideAHoldMs).then(function () {
               if (tok !== sessionToken || !gameState) return;
               handleShowGameOverModal();
             });

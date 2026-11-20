@@ -303,9 +303,11 @@
         state.pendingResolution.winnerIdx === player.index) ||
       (animState && animState.scoringPlayerIdx === player.index);
 
+    var isLanding = !!(animState && animState.stage === 'STEP_0_LANDING');
     var isResolvingVisual = !!state.pendingResolution && state.phase !== 'PLAYING_BATTLE' &&
-      (!animState || animState.stage !== 'CHOOSE_OFFSUIT');
+      (!animState || (animState.stage !== 'CHOOSE_OFFSUIT' && !isLanding));
     var isWinner =
+      !isLanding &&
       (isResolvingVisual || state.phase === 'BATTLE_RESOLVED') &&
       state.pendingResolution &&
       state.pendingResolution.winnerIdx === player.index;
@@ -458,7 +460,7 @@
       return;
     }
 
-    if (!state.pendingResolution || !animState || !animState.stage) {
+    if (!state.pendingResolution || !animState || !animState.stage || animState.stage === 'STEP_0_LANDING') {
       stepperEl.hidden = true;
       stepperEl.innerHTML = '';
       return;
@@ -608,7 +610,7 @@
     prevBattleTag = curBattleTag;
     prevArenaLen = state.arena.length;
 
-    var showWinnerVisual = !!res && stage !== 'CHOOSE_OFFSUIT';
+    var showWinnerVisual = !!res && stage !== 'CHOOSE_OFFSUIT' && stage !== 'STEP_0_LANDING';
     var showCollectVisual =
       !!res &&
       (!animState || stage === 'STEP_3_COLLECT_HIGHLIGHT' || stage === 'STEP_3_COLLECT_FLY');
@@ -655,7 +657,7 @@
         state.players[res.winnerIdx].isHuman;
 
       var boxCls = 'arena-card-box';
-      if (play.playOrder === justPlayedOrder && !res) boxCls += ' is-just-played';
+      if (play.playOrder === justPlayedOrder && (!res || stage === 'STEP_0_LANDING')) boxCls += ' is-just-played';
       if (isHiddenAnim) boxCls += ' is-hidden-for-anim';
       if (isWinnerCard) boxCls += ' is-winner';
       if (isEliminated) boxCls += ' is-eliminated';
@@ -786,6 +788,11 @@
     if (!res) return;
     var winner = state.players[res.winnerIdx];
     var stage = animState && animState.stage;
+
+    if (stage === 'STEP_0_LANDING') {
+      textEl.innerHTML = 'Todas as cartas jogadas na arena — resolvendo batalha...';
+      return;
+    }
 
     if (state.phase === 'CHOOSE_OFFSUIT_CARD' && (!animState || stage === 'CHOOSE_OFFSUIT')) {
       banner.classList.add('is-highlight');
@@ -1015,6 +1022,8 @@
       turnEl.textContent = 'Pontuação Final — Coliseu';
     } else if (stage === 'ROUND_SCORING' || state.phase === 'ROUND_SUMMARY') {
       turnEl.textContent = 'Pontuação da Rodada ' + state.round;
+    } else if (stage === 'STEP_0_LANDING') {
+      turnEl.textContent = 'Resolvendo batalha...';
     } else if (state.pendingResolution && (stage || state.phase === 'BATTLE_RESOLVED')) {
       turnEl.textContent = state.players[state.pendingResolution.winnerIdx].name + ' venceu a batalha!';
     } else {
@@ -1144,7 +1153,7 @@
     if (weaponBox) weaponBox.classList.add('is-hidden-for-anim');
 
     if (elim.source === 'none') {
-      return sleepMs(20).then(function () {
+      return sleepMs(holdMs).then(function () {
         if (isCancelled && isCancelled()) return;
         flyElementToRect(weaponClone, weaponRect, discardRect, flyMs, 0.25, 0.2);
         return sleepMs(flyMs + 30);
@@ -1163,8 +1172,13 @@
     }
 
     if (!targetEl) {
-      flyElementToRect(weaponClone, weaponRect, discardRect, flyMs, 0.25, 0.2);
-      return sleepMs(flyMs + 30).then(clearAnimations);
+      return sleepMs(holdMs).then(function () {
+        if (isCancelled && isCancelled()) return;
+        flyElementToRect(weaponClone, weaponRect, discardRect, flyMs, 0.25, 0.2);
+        return sleepMs(flyMs + 30);
+      }).then(function () {
+        clearAnimations();
+      });
     }
 
     var targetRect = rectCopy(targetEl.getBoundingClientRect());
